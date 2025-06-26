@@ -1,4 +1,4 @@
-<p align="center" style="font-size: 24px;">
+<p align="center">
 Документация API SoundRush 
 </p>
 **Базовый URL** **http://<host>:8080/**
