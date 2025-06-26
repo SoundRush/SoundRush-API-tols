@@ -12,11 +12,11 @@ Authorization: Bearer <ваш токен>
 
 ## Эндпоинты
 ***1. Регистрация пользователя***
-* POST /register
+* POST ```/register```
 
-Тело запроса (JSON):
+### Тело запроса (JSON):
 
-```
+```JSON
 {
   "username": "имя_пользователя",
   "email": "email@example.com",
@@ -30,11 +30,11 @@ Authorization: Bearer <ваш токен>
 * 400 Bad Request — Ошибка валидации или email уже существует
 
 ## 2. Вход (получение токена)
-POST /login
+POST ```/login```
 
-Тело запроса (JSON):
+### Тело запроса (JSON):
 
-```
+```JSON
 {
   "email": "email@example.com",
   "password": "ваш_пароль"
@@ -43,26 +43,28 @@ POST /login
 
 Ответ:
 
-# 200 OK — Возвращает JWT-токен:
-```
+* 200 OK — Возвращает JWT-токен:
+
+```JSON
 {
   "access_token": "<токен>",
   "token_type": "bearer"
 }
 ```
-401 Unauthorized — Неверные данные
-3. Загрузка трека
-POST /tracks
-Требуется авторизация
+* 401 Unauthorized — Неверные данные
+## 3. Загрузка трека
+POST ```/tracks```
+**Требуется авторизация**
 
-Форма (multipart/form-data):
+**Форма (multipart/form-data):**
 
-title — название трека (строка)
-artist — исполнитель (строка)
-file — mp3-файл
-Пример запроса (curl):
+* title — название трека (строка)
+* artist — исполнитель (строка)
+* file — mp3-файл
 
-```
+### Пример запроса (curl):
+
+```curl
 curl -X POST http://<host>:8080/tracks \
   -H "Authorization: Bearer <токен>" \
   -F "title=My Song" \
@@ -72,11 +74,12 @@ curl -X POST http://<host>:8080/tracks \
 
 Ответ:
 
-200 OK — Трек успешно загружен, возвращает ID трека
-400/500 — Ошибка
-4. Получить список треков
-GET /tracks
-Требуется авторизация
+* 200 OK — Трек успешно загружен, возвращает ID трека
+* 400/500 — Ошибка
+
+## 4. Получить список треков
+GET ```/tracks```
+**Требуется авторизация**
 
 Ответ:
 
