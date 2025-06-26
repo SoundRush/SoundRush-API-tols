@@ -63,7 +63,7 @@ type Claims struct {
 
 // Инициализация базы данных
 func setupDB() (*gorm.DB, error) {
-    dsn := "postgres://GGllc:soundrushpassword@db:5432/soundrush_production"
+    dsn := ""
     var db *gorm.DB
     var err error
 
