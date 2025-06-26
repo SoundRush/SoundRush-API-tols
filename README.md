@@ -11,10 +11,12 @@ Authorization: Bearer <ваш токен>
 ```
 
 ## Эндпоинты
-1. Регистрация пользователя
+***1. Регистрация пользователя***
 * POST /register
 
-```Тело запроса (JSON):
+Тело запроса (JSON):
+
+```
 {
   "username": "имя_пользователя",
   "email": "email@example.com",
@@ -31,6 +33,7 @@ Authorization: Bearer <ваш токен>
 POST /login
 
 Тело запроса (JSON):
+
 ```
 {
   "email": "email@example.com",
