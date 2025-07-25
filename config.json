@@ -1,0 +1,11 @@
+{
+    "services": [
+      {
+        "name": "auth",
+        "ip": "127.0.0.1",
+        "port": 8080,
+        "health_check": "/health",
+        "start_cmd": "docker-compose up -d auth"
+      }
+    ]
+  }

@@ -1,11 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,17 +26,17 @@ const (
 // Модели
 type User struct {
 	ID       uint64 `gorm:"primaryKey"`
-	Username string   `gorm:"unique;not null"`
-	Email    string   `gorm:"unique;not null"`
+	Username string `gorm:"unique;not null"`
+	Email    string `gorm:"unique;not null"`
 	Password string `gorm:"not null"`
 }
 
 type Track struct {
-	ID      uint64 `gorm:"id;primaryKey"`
+	ID       uint64 `gorm:"id;primaryKey"`
 	Title    string `gorm:"not null"`
 	Artist   string `gorm:"artist;not null"`
 	FilePath string `gorm:"not null"`
-	UserID  uint64 `gorm:"not null"`
+	UserID   uint64 `gorm:"not null"`
 	User     User   `gorm:"foreignKey:UserID"`
 }
 
@@ -61,27 +62,67 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Инициализация базы данных
-func setupDB() (*gorm.DB, error) {
-    dsn := ""
-    var db *gorm.DB
-    var err error
-
-    for i := 0; i < 10; i++ {
-        db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-        if err == nil {
-            break
-        }
-        log.Printf("Failed to connect to database, retrying... (%d/10)", i+1)
-        time.Sleep(3 * time.Second)
-    }
-    if err != nil {
-        return nil, err
-    }
-    db.AutoMigrate(&User{}, &Track{})
-    return db, nil
+// Расширенная структура для конфигурации микросервисов
+// config.json пример:
+//
+//	{
+//	  "services": [
+//	    {
+//	      "name": "auth",
+//	      "ip": "127.0.0.1",
+//	      "port": 8080,
+//	      "health_check": "/health",
+//	      "start_cmd": "docker-compose up -d auth"
+//	    }
+//	  ]
+//	}
+type ServiceConfig struct {
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	Port        int    `json:"port"`
+	HealthCheck string `json:"health_check"`
+	StartCmd    string `json:"start_cmd"`
 }
 
+type Config struct {
+	Services []ServiceConfig `json:"services"`
+}
+
+// Функция для чтения конфигурации из JSON
+func loadConfig(path string) (*Config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var config Config
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// Инициализация базы данных
+func setupDB() (*gorm.DB, error) {
+	dsn := ""
+	var db *gorm.DB
+	var err error
+
+	for i := 0; i < 10; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err == nil {
+			break
+		}
+		log.Printf("Failed to connect to database, retrying... (%d/10)", i+1)
+		time.Sleep(3 * time.Second)
+	}
+	if err != nil {
+		return nil, err
+	}
+	db.AutoMigrate(&User{}, &Track{})
+	return db, nil
+}
 
 // Хелперы
 func hashPassword(password string) (string, error) {
@@ -137,130 +178,60 @@ func authMiddleware(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
+func checkServiceHealth(svc ServiceConfig) bool {
+	url := fmt.Sprintf("http://%s:%d%s", svc.IP, svc.Port, svc.HealthCheck)
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
+func tryStartService(svc ServiceConfig) {
+	if svc.StartCmd == "" {
+		log.Printf("Нет команды запуска для сервиса %s", svc.Name)
+		return
+	}
+	log.Printf("Пытаюсь поднять сервис %s: %s", svc.Name, svc.StartCmd)
+	// Запуск команды старта сервиса
+	go func() {
+		cmd := exec.Command("sh", "-c", svc.StartCmd)
+		if err := cmd.Run(); err != nil {
+			log.Printf("Ошибка запуска сервиса %s: %v", svc.Name, err)
+		}
+	}()
+}
+
 // Эндпоинты
 func main() {
-	// Инициализация
-	if err := os.MkdirAll(UploadDir, 0755); err != nil {
-		log.Fatal("Failed to create upload directory: ", err)
-	}
-	db, err := setupDB()
+	config, err := loadConfig("config.json")
 	if err != nil {
-		log.Fatal("Failed to connect to database: ", err)
+		log.Fatal("Failed to load config: ", err)
 	}
-	r := gin.Default()
+	fmt.Println("Загружена конфигурация сервисов:", config)
 
-	// Регистрация
-	r.POST("/register", func(c *gin.Context) {
-		var req RegisterRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		var existingUser User
-		if db.Where("email = ?", req.Email).First(&existingUser).Error == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Email already exists"})
-			return
-		}
-		hashedPassword, err := hashPassword(req.Password)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
-			return
-		}
-		user := User{
-			Username: req.Username,
-			Email:    req.Email,
-			Password: hashedPassword,
-		}
-		if err := db.Create(&user).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "User registered successfully"})
-	})
+	// Балансировщик нагрузки и мониторинг сервисов
+	for _, svc := range config.Services {
+		fmt.Printf("Микросервис: %s, адрес: %s:%d\n", svc.Name, svc.IP, svc.Port)
+	}
 
-	// Авторизация
-	r.POST("/login", func(c *gin.Context) {
-		var req LoginRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+	// Запуск мониторинга сервисов в отдельной горутине
+	go func() {
+		for {
+			for _, svc := range config.Services {
+				if !checkServiceHealth(svc) {
+					log.Printf("Сервис %s не отвечает. Пытаюсь поднять...", svc.Name)
+					tryStartService(svc)
+				} else {
+					log.Printf("Сервис %s работает нормально", svc.Name)
+				}
+			}
+			time.Sleep(5 * time.Second)
 		}
-		var user User
-		if err := db.Where("email = ?", req.Email).First(&user).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-			return
-		}
-		if err := verifyPassword(req.Password, user.Password); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-			return
-		}
-		token, err := generateJWT(&user)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"access_token": token, "token_type": "bearer"})
-	})
+	}()
 
-	// Защищённые эндпоинты
-	authorized := r.Group("/").Use(authMiddleware(db))
-
-	// Загрузка трека
-	authorized.POST("/tracks", func(c *gin.Context) {
-		user, _ := c.Get("user")
-		currentUser := user.(User)
-		var req TrackRequest
-		if err := c.ShouldBind(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		file, err := c.FormFile("file")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "File required"})
-			return
-		}
-		// Проверка формата файла (например, только mp3)
-		if filepath.Ext(file.Filename) != ".mp3" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Only MP3 files are allowed"})
-			return
-		}
-
-		filePath := fmt.Sprintf("%s/%d_%s", UploadDir, time.Now().UnixNano(), file.Filename)
-		if err := c.SaveUploadedFile(file, filePath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-			return
-		}
-
-		track := Track{
-			Title:    req.Title,
-			Artist:   req.Artist,
-			FilePath: filePath,
-			UserID:   currentUser.ID,
-		}
-		if err := db.Create(&track).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save track"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Track uploaded successfully", "track_id": track.ID})
-	})
-
-	authorized.GET("/tracks", func(c *gin.Context) {
-		var tracks []Track
-		if err := db.Find(&tracks).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tracks"})
-			return
-		}
-		c.JSON(http.StatusOK, tracks)
-	})
-
-	authorized.GET("/tracks/:id", func(c *gin.Context) {
-		var track Track
-		if err := db.First(&track, c.Param("id")).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Track not found"})
-			return
-		}
-		c.JSON(http.StatusOK, track)
-	})
-
-	r.Run(":8080")
+	// Бесконечный цикл, чтобы API не завершался
+	select {}
 }
